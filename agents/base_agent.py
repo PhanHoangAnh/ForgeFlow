@@ -2,6 +2,11 @@ import os
 import json
 import logging
 from abc import ABC, abstractmethod
+from dotenv import load_dotenv
+from google import genai
+
+# Load variables from .env
+load_dotenv()
 
 class BaseAgent(ABC):
     def __init__(self, name, state_path="state.json"):
@@ -9,6 +14,11 @@ class BaseAgent(ABC):
         self.state_path = state_path
         self.log_file = f"logs/{self.name.lower()}.log"
         
+        # 1. Initialize Gemini Client using the .env key
+        api_key = os.getenv("GOOGLE_API_KEY")
+        self.client = genai.Client(api_key=api_key)
+        self.model_id = "gemini-2.0-flash"
+
         # Setup logging
         logging.basicConfig(
             filename=self.log_file,
@@ -17,14 +27,39 @@ class BaseAgent(ABC):
         )
         self.logger = logging.getLogger(self.name)
         
-        # Ensure state file exists
         if not os.path.exists(self.state_path):
             self._write_state({
                 "requirements": {"fr": [], "nfr": []},
                 "environment_state": {"status": "uninitialized", "libs": []},
+                "implementation_progress": {},
                 "event_queue": [],
                 "project_metadata": {"name": "ForgeFlow_Project", "path": "workspace/"}
             })
+
+    def read_specs(self, folder="spec_requirements"):
+        """Utility to read all requirement context for the LLM."""
+        context = ""
+        if not os.path.exists(folder):
+            return "No specifications found."
+        for filename in os.listdir(folder):
+            if filename.endswith(".md"):
+                with open(os.path.join(folder, filename), 'r') as f:
+                    context += f"\n--- {filename} ---\n{f.read()}\n"
+        return context
+
+    def think(self, prompt, system_instruction="You are a senior engineer."):
+        """Invokes the Gemini 2.0 Brain."""
+        self.logger.info(f"Invoking LLM for {self.name}")
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=prompt,
+                config={'system_instruction': system_instruction}
+            )
+            return response.text
+        except Exception as e:
+            self.logger.error(f"LLM Error: {e}")
+            return f"Error: {e}"
 
     def _read_state(self):
         with open(self.state_path, 'r') as f:
@@ -35,36 +70,15 @@ class BaseAgent(ABC):
             json.dump(state, f, indent=4)
 
     def get_state(self, key):
-        state = self._read_state()
-        return state.get(key)
+        return self._read_state().get(key)
 
     def update_state(self, key, value):
         state = self._read_state()
         state[key] = value
         self._write_state(state)
-        self.logger.info(f"Updated state: {key}")
 
     def emit_event(self, event_type, details):
-        """Used for DCRs (Dependency Change Requests)"""
         state = self._read_state()
-        event = {
-            "from": self.name,
-            "type": event_type,
-            "details": details,
-            "status": "pending"
-        }
+        event = {"from": self.name, "type": event_type, "details": details, "status": "pending"}
         state["event_queue"].append(event)
         self._write_state(state)
-        self.logger.info(f"Emitted event: {event_type}")
-
-    @abstractmethod
-    def run(self, task_input):
-        """To be implemented by specific agents"""
-        pass
-
-    def think(self, prompt):
-        # This will be connected to your LLM/Gemini API wrapper
-        self.logger.info(f"Thinking about: {prompt[:50]}...")
-        print(f"[{self.name}] Processing...")
-        # Placeholder for actual LLM call
-        return "LLM_RESPONSE_PLACEHOLDER"
