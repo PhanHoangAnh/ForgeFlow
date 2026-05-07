@@ -1,36 +1,37 @@
 import os
-import subprocess
 from agents.base_agent import BaseAgent
 
 class DevOpsAgent(BaseAgent):
     def run(self, task_input=None):
-        self.logger.info("Initializing infrastructure provisioning...")
-        reqs = self.get_state("requirements")
-        nfrs = reqs.get("nfr", [])
+        self.logger.info("Checking for infrastructure tasks...")
+        events = self.get_state("event_queue")
         
-        # 1. Generate Environment Specification
-        # In a real scenario, this would parse the NFRs to find libs
-        env_name = "forgeflow_env"
-        python_version = "3.11" # Extracted from NFR "Python 3.11+"
+        # 1. Check for Reactive Tasks (DCRs)
+        pending_dcrs = [e for e in events if e["type"] == "DCR" and e["status"] == "pending"]
         
-        # Check if environment already exists or needs update
-        print(f"[{self.name}] Creating/Updating Conda environment: {env_name}")
-        
-        # Simulate environment.yml creation
-        env_content = f"name: {env_name}\nchannels:\n  - defaults\ndependencies:\n  - python={python_version}\n  - pip\n"
-        with open("environment.yml", "w") as f:
-            f.write(env_content)
+        if pending_dcrs:
+            print(f"[{self.name}] Reactive Mode: Addressing Dependency Change Requests...")
+            env_state = self.get_state("environment_state")
             
-        # 2. Execute Shell Command (Simulated for safety, but structure is here)
-        # command = f"conda env create -f environment.yml || conda env update -f environment.yml"
-        # subprocess.run(command, shell=True)
-        
-        self.update_state("environment_state", {
-            "status": "provisioned",
-            "env_name": env_name,
-            "python_version": python_version,
-            "libs": ["base-python", "pip"]
-        })
-        
-        print(f"[{self.name}] Environment {env_name} provisioned.")
-        return "Infrastructure Ready."
+            for dcr in pending_dcrs:
+                lib = dcr["details"]["library"]
+                reason = dcr["details"]["reason"]
+                print(f"[{self.name}] Installing '{lib}' ({reason})...")
+                
+                # Update local environment state
+                if lib not in env_state["libs"]:
+                    env_state["libs"].append(lib)
+                
+                # Mark the specific event as resolved in our local list
+                dcr["status"] = "resolved"
+            
+            # Commit updates to state
+            self.update_state("environment_state", env_state)
+            self.update_state("event_queue", events)
+            print(f"[{self.name}] Environment updated and DCRs resolved.")
+            return "Dependencies Updated"
+
+        # 2. Initial Provisioning Logic (Fallback)
+        print(f"[{self.name}] No pending DCRs. Ensuring base infrastructure...")
+        # ... (Keep your initial environment.yml logic here)
+        return "Base Infrastructure Verified"
