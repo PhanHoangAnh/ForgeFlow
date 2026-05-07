@@ -7,14 +7,14 @@ class ImplementerAgent(BaseAgent):
         requirement = blueprint_details["requirement"]
         self.logger.info(f"Analyzing implementation for {requirement}")
 
-        # 1. Gather all system context from the specs folder
+        # 1. Gather all system context from the specs folder and environment
         specs = self.read_specs()
         env_libs = self.get_state("environment_state")["libs"]
         
         system_prompt = (
             "You are a Senior Polymorphic Developer in the ForgeFlow Factory. "
-            "Identify if the task is Frontend or Backend. "
-            "Output ONLY pure code. No markdown backticks, no explanations."
+            "Identify if the current task is Frontend or Backend based on context. "
+            "Output ONLY pure, production-ready code. No markdown backticks, no explanations."
         )
         
         user_prompt = (
@@ -22,22 +22,27 @@ class ImplementerAgent(BaseAgent):
             f"TARGET FILE: {target_file}\n"
             f"BLUEPRINT: {blueprint_details}\n"
             f"ENVIRONMENT LIBS: {env_libs}\n"
-            f"SYSTEM CONTEXT: {specs}\n\n"
-            "If a library is missing for this code to work, start with 'DCR_REQUIRED: [lib_name]'."
+            f"SYSTEM CONTEXT (Requirements): {specs}\n\n"
+            "If a specific library is missing for this code to work, "
+            "start your response with 'DCR_REQUIRED: [lib_name]'."
         )
 
-        # 2. Call the Gemini Brain
+        # 2. Call the Gemini Brain to generate the solution
         raw_response = self.think(user_prompt, system_instruction=system_prompt)
 
-        # 3. Handle Dependency Requests
+        # 3. Handle Reactive Dependency Requests
         if "DCR_REQUIRED" in raw_response:
             lib_needed = raw_response.split(":")[1].strip().split()[0]
-            self.emit_event("DCR", {"library": lib_needed, "reason": "LLM code requirement"})
+            self.emit_event("DCR", {
+                "library": lib_needed, 
+                "reason": "LLM identified library requirement for implementation"
+            })
             return "Paused: Waiting for DCR"
 
-        # 4. Save and Finish
+        # 4. Persistence Logic
         os.makedirs(os.path.dirname(target_file), exist_ok=True)
-        # Force-clean code if the LLM provided markdown formatting
+        
+        # Clean potential markdown backticks if the LLM provided them
         clean_code = raw_response.replace("```python", "").replace("```", "").strip()
         
         with open(target_file, "w") as f:

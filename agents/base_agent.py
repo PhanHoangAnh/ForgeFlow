@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from dotenv import load_dotenv
 from google import genai
 
-# Load variables from .env
+# Load variables from .env to keep the API key secure
 load_dotenv()
 
 class BaseAgent(ABC):
@@ -14,12 +14,12 @@ class BaseAgent(ABC):
         self.state_path = state_path
         self.log_file = f"logs/{self.name.lower()}.log"
         
-        # 1. Initialize Gemini Client using the .env key
+        # Initialize Gemini Client using the .env key
         api_key = os.getenv("GOOGLE_API_KEY")
         self.client = genai.Client(api_key=api_key)
         self.model_id = "gemini-2.0-flash"
 
-        # Setup logging
+        # Setup logging infrastructure
         logging.basicConfig(
             filename=self.log_file,
             level=logging.INFO,
@@ -27,6 +27,7 @@ class BaseAgent(ABC):
         )
         self.logger = logging.getLogger(self.name)
         
+        # Initialize the shared state if it does not exist
         if not os.path.exists(self.state_path):
             self._write_state({
                 "requirements": {"fr": [], "nfr": []},
@@ -37,7 +38,7 @@ class BaseAgent(ABC):
             })
 
     def read_specs(self, folder="spec_requirements"):
-        """Utility to read all requirement context for the LLM."""
+        """Utility to read all requirement context from the specific folder."""
         context = ""
         if not os.path.exists(folder):
             return "No specifications found."
@@ -48,7 +49,7 @@ class BaseAgent(ABC):
         return context
 
     def think(self, prompt, system_instruction="You are a senior engineer."):
-        """Invokes the Gemini 2.0 Brain."""
+        """Invokes the Gemini 2.0 Brain for high-level reasoning."""
         self.logger.info(f"Invoking LLM for {self.name}")
         try:
             response = self.client.models.generate_content(
@@ -78,7 +79,17 @@ class BaseAgent(ABC):
         self._write_state(state)
 
     def emit_event(self, event_type, details):
+        """Emits an event to the shared event queue for other agents to react to."""
         state = self._read_state()
-        event = {"from": self.name, "type": event_type, "details": details, "status": "pending"}
+        event = {
+            "from": self.name, 
+            "type": event_type, 
+            "details": details, 
+            "status": "pending"
+        }
         state["event_queue"].append(event)
         self._write_state(state)
+
+    @abstractmethod
+    def run(self, task_input):
+        pass
